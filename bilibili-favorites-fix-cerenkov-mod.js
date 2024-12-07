@@ -1,11 +1,11 @@
 // ==UserScript==
-// @name         哔哩哔哩(B站|Bilibili)收藏夹Fix
+// @name         哔哩哔哩(B站|Bilibili)收藏夹Fix (cerenkov修改版)
 // @namespace    http://tampermonkey.net/
-// @version      1.2.1.1
+// @version      1.2.1.2
 // @description  修复 哔哩哔哩(www.bilibili.com) 失效的收藏。（可查看av号、简介、标题、封面、数据等）
-// @author       Mr.Po
-// @license      MIT
-// @match        https://space.bilibili.com/*
+// @author       cerenkov
+// @license      GPL-3.0
+// @match        *://space.bilibili.com/*/favlist*
 // @require      https://cdnjs.cloudflare.com/ajax/libs/jquery/1.11.0/jquery.min.js
 // @resource iconError https://cdn.jsdelivr.net/gh/Mr-Po/bilibili-favorites-fix/media/error.png
 // @resource iconSuccess https://cdn.jsdelivr.net/gh/Mr-Po/bilibili-favorites-fix/media/success.png
@@ -57,45 +57,81 @@
      */
     const favlistRegex = /https:\/\/space\.bilibili\.com\/\d+\/favlist.*/;
 
+/*     var isFirefox = false;
+    var isChromium = false;
+    if (GM_info.userAgentData.brands && GM_info.userAgentData.brands.length > 0) {
+        var brands = GM_info.userAgentData.brands;
+        if (brands.some(x => x.brand.match(/firefox/i))) {
+            isFirefox = true;
+        } else if (brands.some(x => x.brand.match(/chromium|chrome|edge/i))) {
+            isChromium = true;
+        }
+    } */
+    var isNewUI = false;
+
+    function getElemBV(elem) {
+        if ($(elem).attr("bvid")) {
+            return $(elem).attr("bvid");
+        }
+        var bvid = "";
+        if (isNewUI) {
+            // console.log($(elem).find(".bili-cover-card").first().attr("href"));
+            bvid = /bilibili\.com\/video\/(\w+)[^\w]?/.exec($(elem).find(".bili-cover-card").first().attr("href"))[1];
+        } else {
+            bvid = $(elem).attr("data-aid");
+        }
+        $(elem).attr("bvid", bvid);
+        return bvid;
+    }
+
     /**
      * 处理收藏
      */
     function handleFavorites() {
-
+        if ($("div.fav-list-main div.items").length > 0) isNewUI = true;
         const flag = favlistRegex.test(window.location.href);
 
         if (flag) { // 当前页面是收藏地址
-
             // 失效收藏节点集
-            const $lis = $("ul.fav-video-list.content li.small-item.disabled");
-
+            var $lis = null;
+            if (isNewUI) {
+                $lis = $("div.fav-list-main div.items > div").filter(function (i, elem) { return $(elem).find(".bili-video-card__title a").first().text() == "已失效视频"; });
+                // console.log($lis);
+            } else if ($("ul.fav-video-list.content")) {
+                $lis = $("ul.fav-video-list.content li.small-item.disabled");
+            } else {
+                console.warn('哔哩哔哩(B站|Bilibili)收藏夹Fix(cerenkov-fork): B站网页样式无法识别');
+            }
+            console.log(isNewUI);
+            if (isDebug) console.log(`lis.size ${$lis.size()}`);
             if ($lis.size() > 0) {
 
                 console.info(`${$lis.size()}个收藏待修复...`);
 
                 $lis.each(function(i, it) {
-
-                    const bv = $(it).attr("data-aid");
-
+                    var bv = getElemBV(it);
+                    // console.log(bv);
                     // Mr.Po原脚本的bv2aid算法已经失效，函数 bv2aid 已更新为 bilibili-app-recommend 脚本所使用的算法
                     // 如果未来B站还继续更改它的bvid-avid算法，那干脆考虑将下文的 showDetail($lis) 代码放到前面， showDetail 函数已经通过B站端口直接获得了失效视频的avid（$media.id），那这里就只需引用即可，无需 bv2aid 函数
                     const aid = bv2aid(bv);
 
                     // 多个超链接
-                    const $as = $(it).find("a");
+                    const $as = $(it).find("a:not(.bili-video-card__author)");
 
                     $as.attr("href", `https://www.biliplus.com/video/av${aid}/`);
                     $as.attr("target", "_blank");
 
                     addCopyAVCodeButton($(it), aid);
-                    
+
                     addCopyBVCodeButton($(it), bv);  // cerenkov-fork 添加功能
 
                     fixTitleAndPic($(it), $($as[1]), aid);
 
                     // 移除禁用样式
-                    $(it).removeClass("disabled");
-                    $as.removeClass("disabled");
+                    if (!isNewUI) {
+                        $(it).removeClass("disabled");
+                        $as.removeClass("disabled");
+                    }
                 });
 
                 showDetail($lis);
@@ -104,21 +140,35 @@
     }
 
     function addOperation($item, name, fun) {
+        if (isNewUI) {
+            var dropdown = $item.find(".bili-card-dropdown").first();
+            dropdown.hover(
+                function() {
+                    setTimeout(function() {
+                        if (!$(".bili-card-dropdown-popper.visible").first().find(".bilibili-favorite-fix").text().includes(name)) {
+                            var menu = $(`<div class="bili-card-dropdown-popper__item bilibili-favorite-fix">${name}</div>`);
+                            menu.click(fun);
+                            $(".bili-card-dropdown-popper.visible").first().append(menu);
+                        }
+                    }, 500);
+                }, function() {}
+            );
+        } else {
+            const $ul = $item.find(".be-dropdown-menu").first();
 
-        const $ul = $item.find(".be-dropdown-menu").first();
+            const lastChild = $ul.children().last();
 
-        const lastChild = $ul.children().last();
+            // 未添加过扩展
+            if (!lastChild.hasClass('be-dropdown-item-extend')) {
+                lastChild.addClass("be-dropdown-item-delimiter");
+            }
 
-        // 未添加过扩展
-        if (!lastChild.hasClass('be-dropdown-item-extend')) {
-            lastChild.addClass("be-dropdown-item-delimiter");
+            const $li = $(`<li class="be-dropdown-item be-dropdown-item-extend">${name}</li>`);
+
+            $li.click(fun);
+
+            $ul.append($li);
         }
-
-        const $li = $(`<li class="be-dropdown-item be-dropdown-item-extend">${name}</li>`);
-
-        $li.click(fun);
-
-        $ul.append($li);
     }
 
     function addCopyAVCodeButton($item, aid) {
@@ -247,7 +297,7 @@
         $a.attr("title", $a.text());
 
         // 多个超链接
-        const $as = $it.find("a");
+        const $as = $it.find("a:not(.bili-video-card__author)");
         $as.attr("href", `https://www.biliplus.com/${history}video/av${aid}/`);
 
         signInval($it, $a);
@@ -488,7 +538,11 @@
             fid = $("div.fav-item.cur").attr("fid");
         }
 
-        const pn = $("ul.be-pager li.be-pager-item.be-pager-item-active").text();
+        if (isNewUI) {
+            var pn = $("div.vui_pagenation--btns .vui_button.vui_button--active").text();
+        } else {
+            var pn = $("ul.be-pager li.be-pager-item.be-pager-item-active").text();
+        }
 
 //        Mr.Po原脚本的过期失效端口
 //        $.ajax({
@@ -497,7 +551,7 @@
 
         GM_xmlhttpRequest({
             method: 'GET',
-            url: `https://api.bilibili.com/x/v3/fav/resource/list?media_id=${fid}&pn=${pn}&ps=20&keyword=&order=mtime&type=0&tid=0&platform=web`,
+            url: `https://api.bilibili.com/x/v3/fav/resource/list?media_id=${fid}&pn=${pn}&ps=${isNewUI ? 40 : 20}&keyword=&order=mtime&type=0&tid=0&platform=web`,
             responseType: "json",
             onload: function(response) {
                 const json = response.response;
@@ -506,7 +560,7 @@
 
                 $lis.each(function(i, it) {
 
-                    const bv = $(it).attr("data-aid");
+                    var bv = getElemBV(it);
 
                     const $mediaF = $medias.filter(function(it) {
                         if (it.bvid == bv) {
