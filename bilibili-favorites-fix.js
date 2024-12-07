@@ -1,19 +1,22 @@
 // ==UserScript==
 // @name         哔哩哔哩(B站|Bilibili)收藏夹Fix
 // @namespace    http://tampermonkey.net/
-// @version      1.2.1
-// @description  修复 哔哩哔哩(www.bilibili.com) 失效的收藏。（可查看av号、简介、标题、封面）
+// @version      1.2.1.1
+// @description  修复 哔哩哔哩(www.bilibili.com) 失效的收藏。（可查看av号、简介、标题、封面、数据等）
 // @author       Mr.Po
+// @license      MIT
 // @match        https://space.bilibili.com/*
 // @require      https://cdnjs.cloudflare.com/ajax/libs/jquery/1.11.0/jquery.min.js
 // @resource iconError https://cdn.jsdelivr.net/gh/Mr-Po/bilibili-favorites-fix/media/error.png
 // @resource iconSuccess https://cdn.jsdelivr.net/gh/Mr-Po/bilibili-favorites-fix/media/success.png
 // @resource iconInfo https://cdn.jsdelivr.net/gh/Mr-Po/bilibili-favorites-fix/media/info.png
 // @connect      biliplus.com
+// @connect      api.bilibili.com
 // @grant        GM_xmlhttpRequest
 // @grant        GM_notification
 // @grant        GM_setClipboard
 // @grant        GM_getResourceURL
+// @grant        GM_openInTab
 // ==/UserScript==
 
 /*jshint esversion: 8 */
@@ -74,6 +77,8 @@
 
                     const bv = $(it).attr("data-aid");
 
+                    // Mr.Po原脚本的bv2aid算法已经失效，函数 bv2aid 已更新为 bilibili-app-recommend 脚本所使用的算法
+                    // 如果未来B站还继续更改它的bvid-avid算法，那干脆考虑将下文的 showDetail($lis) 代码放到前面， showDetail 函数已经通过B站端口直接获得了失效视频的avid（$media.id），那这里就只需引用即可，无需 bv2aid 函数
                     const aid = bv2aid(bv);
 
                     // 多个超链接
@@ -83,6 +88,8 @@
                     $as.attr("target", "_blank");
 
                     addCopyAVCodeButton($(it), aid);
+                    
+                    addCopyBVCodeButton($(it), bv);  // cerenkov-fork 添加功能
 
                     fixTitleAndPic($(it), $($as[1]), aid);
 
@@ -115,22 +122,32 @@
     }
 
     function addCopyAVCodeButton($item, aid) {
-
         addOperation($item, "复制av号", function() {
-
             GM_setClipboard(`av${aid}`, "text");
-
             tipSuccess("av号复制成功！");
         });
     }
 
+    // cerenkov-fork 添加功能
+    function addCopyBVCodeButton($item, bv) {
+        addOperation($item, "复制bv号", function() {
+            GM_setClipboard(bv, "text");
+            tipSuccess("bv号复制成功！");
+        });
+    }
+
     function addCopyInfoButton($item, content) {
-
         addOperation($item, "复制简介", function() {
-
             GM_setClipboard(content, "text");
-
             tipSuccess("简介复制成功！");
+        });
+    }
+
+    // cerenkov-fork 添加功能
+    function addOpenUpSpaceButton($item, mid) {
+        addOperation($item, "跳转UP主空间", function () {
+            GM_openInTab(`https://space.bilibili.com/${mid}`, {active: true, insert: true, setParent: true});
+            tipSuccess("跳转UP主空间成功！");
         });
     }
 
@@ -236,10 +253,12 @@
         signInval($it, $a);
 
         // 判断海报链接是否有效，有效时进行替换
-        isLoad(pic, function() {
+        // cerenkov-fork 修改版把判断链接有效性的步骤注释掉，反正本来就没封面图，直接把biliplus返回的图片链接换上，就算链接无效，也不会变得更糟了
+        // isLoad(pic, function() {
             const $img = $it.find("img");
             $img.attr("src", pic);
-        });
+            $it.find("source").remove();  // cerenkov-fork BUGFIX: B站新界面把img元素放在picture元素内、与另两个source元素并列，Mr.Po原脚本没删掉source元素，导致浏览器优先显示source元素的无效封面图，而新替换上的封面图没显示出来
+        // });
     }
 
     /**
@@ -471,9 +490,17 @@
 
         const pn = $("ul.be-pager li.be-pager-item.be-pager-item-active").text();
 
-        $.ajax({
-            url: `https://api.bilibili.com/medialist/gateway/base/spaceDetail?media_id=${fid}&pn=${pn}&ps=20&keyword=&order=mtime&type=0&tid=0&jsonp=jsonp`,
-            success: function(json) {
+//        Mr.Po原脚本的过期失效端口
+//        $.ajax({
+//             url: `https://api.bilibili.com/medialist/gateway/base/spaceDetail?media_id=${fid}&pn=${pn}&ps=20&keyword=&order=mtime&type=0&tid=0&jsonp=jsonp`,
+//            success: function(json) {
+
+        GM_xmlhttpRequest({
+            method: 'GET',
+            url: `https://api.bilibili.com/x/v3/fav/resource/list?media_id=${fid}&pn=${pn}&ps=20&keyword=&order=mtime&type=0&tid=0&platform=web`,
+            responseType: "json",
+            onload: function(response) {
+                const json = response.response;
 
                 const $medias = json.data.medias;
 
@@ -502,47 +529,62 @@
                         titles = $titlesM.join("、");
                     }
 
-                    const aid = bv2aid(bv);
+                    // const aid = bv2aid(bv);  // Mr.Po原脚本的bv2aid算法已经失效，函数 bv2aid 已更新为 bilibili-app-recommend 脚本所使用的算法，但这里直接用 $media.id 也一样，还更可靠
 
-                    const content = `av：${aid}\nP数：${$media.page}\n子P：${titles}\n简介：${$media.intro}`;
+                    const content = `av：${$media.id}\nbv：${bv}\n标题：${$media.title}\nUP主：${$media.upper.name} （https://space.bilibili.com/${$media.upper.mid}）\n简介：${$media.intro}\n发布时间：${new Date($media.pubtime*1000).toLocaleString()}\nP数：${$media.page}\n子P：${titles}\n播放数：${$media.cnt_info.play}\n收藏数：${$media.cnt_info.collect}\n弹幕数：${$media.cnt_info.danmaku}`;  // cerenkov-fork 添加信息
 
                     $($a[0]).attr("title", content);
 
                     addCopyInfoButton($(it), content);
+
+                    addOpenUpSpaceButton($(it), $media.upper.mid);  // cerenkov-fork 添加功能
                 });
             }
         });
     }
 
-    const bvTable = "fZodR9XQDSUm21yCkr6zBqiveYah8bt4xsWpHnJE7jL5VG3guMTKNPAwcF";
-    const bvArray = [
-        { bvIndex: 11, bvTimes: 1 },
-        { bvIndex: 10, bvTimes: 58 },
-        { bvIndex: 3, bvTimes: 3364 },
-        { bvIndex: 8, bvTimes: 195112 },
-        { bvIndex: 4, bvTimes: 11316496 },
-        { bvIndex: 6, bvTimes: 656356768 },
-    ];
-    const bvXor = 177451812;
-    const bvAdd = 8728348608;
+    // Mr.Po原脚本的bv2aid算法已经失效，更新为 bilibili-app-recommend 脚本所使用的算法
+    // 见 https://greasyfork.org/zh-CN/scripts/443530-bilibili-app-recommend
+    // const bvTable = "fZodR9XQDSUm21yCkr6zBqiveYah8bt4xsWpHnJE7jL5VG3guMTKNPAwcF";
+    // const bvArray = [
+        // { bvIndex: 11, bvTimes: 1 },
+        // { bvIndex: 10, bvTimes: 58 },
+        // { bvIndex: 3, bvTimes: 3364 },
+        // { bvIndex: 8, bvTimes: 195112 },
+        // { bvIndex: 4, bvTimes: 11316496 },
+        // { bvIndex: 6, bvTimes: 656356768 },
+    // ];
+    // const bvXor = 177451812;
+    // const bvAdd = 8728348608;
+    var XOR_CODE = 23442827791579n;
+    var MASK_CODE = 2251799813685247n;
+    var BASE = 58n;
+    var CHAR_TABLE = "FcwAPNKTMug3GV5Lj7EJnHpWsx4tb8haYeviqBz6rkCy12mUSDQX9RdoZf";
 
-
+    // Mr.Po原脚本的bv2aid算法已经失效，更新为 bilibili-app-recommend 脚本所使用的算法
+    // 见 https://greasyfork.org/zh-CN/scripts/443530-bilibili-app-recommend
     /**
      * BV号转aid
      * @param  {字符串}	bv BV号
      * @return {数字}	av号
      */
-    function bv2aid(bv) {
-
-        const value = bvArray
-            .map((it, i) => {
-                return bvTable.indexOf(bv[it.bvIndex]) * it.bvTimes;
-            })
-            .reduce((total, num) => {
-                return total + num;
-            });
-
-        return (value - bvAdd) ^ bvXor;
+    // function bv2aid(bv) {
+        // const value = bvArray
+            // .map((it, i) => {
+                // return bvTable.indexOf(bv[it.bvIndex]) * it.bvTimes;
+            // })
+            // .reduce((total, num) => {
+                // return total + num;
+            // });
+        // return (value - bvAdd) ^ bvXor;
+    // }
+    function bv2aid(bvid) {
+        const bvidArr = Array.from(bvid);
+        [bvidArr[3], bvidArr[9]] = [bvidArr[9], bvidArr[3]];
+        [bvidArr[4], bvidArr[7]] = [bvidArr[7], bvidArr[4]];
+        bvidArr.splice(0, 3);
+        const tmp = bvidArr.reduce((pre, bvidChar) => pre * BASE + BigInt(CHAR_TABLE.indexOf(bvidChar)), 0n);
+        return Number(tmp & MASK_CODE ^ XOR_CODE);
     }
 
     function tip(text, iconName) {
