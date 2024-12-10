@@ -53,16 +53,28 @@
      */
     const interval = 2000;
 
-/*     let isFirefox = false;
+    let isFirefox = false;
     let isChromium = false;
-    if (GM_info.userAgentData.brands && GM_info.userAgentData.brands.length > 0) {
-        let brands = GM_info.userAgentData.brands;
+    let brands = GM_info.userAgentData.brands;
+    if (brands && brands.length > 0) {
         if (brands.some(x => x.brand.match(/firefox/i))) {
             isFirefox = true;
         } else if (brands.some(x => x.brand.match(/chromium|chrome|edge/i))) {
             isChromium = true;
         }
-    } */
+    }
+    // 阿B是真丢人啊，Firefox下，一旦标题<a>内文字过长出现text-overflow，菜单按钮就无法在鼠标hover时显示
+    // 这么基础的毛病，新UI铺开之前都测试不出来吗？
+    // 对于一般视频问题不大，但失效恢复视频的功能很需要这个功能菜单
+    // 在阿B修好之前，只能我代为临时处理一下了
+    function stripTitleFirefox(title) {
+        if (isFirefox && title.length > 24) {
+            return title.slice(0,24)+"..";
+        } else {
+            return title;
+        }
+    }
+
     // 是否B站新网页界面，在首次（每次）运行handleFavorites()时会检测网页并记录在该变量中
     let isNewUI = false;
 
@@ -638,7 +650,7 @@ ${partsInfo}播放数：${media.cnt_info.play}
         $aElems.attr("href", `https://www.biliplus.com/${history ? history : ""}video/av${avid}/`);
 
         // 设置标题文字
-        $titleElem.text(title);
+        $titleElem.text(stripTitleFirefox(title));
         $titleElem.attr("title", title);
 
         // 保存标题和子P标题到节点上，以便让 showDetail 读取
