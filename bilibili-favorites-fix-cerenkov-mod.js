@@ -487,10 +487,11 @@ ${partsInfo}播放数：${media.cnt_info.play}
                             fixTitleAndPicEnhance1($item, $titleElem, avid);
                         }
                     }
-                } catch (e) { // 网页内容解析错误
-                    console.error("[bilibili-fav-fix] 常规查询结果解析出错");
-                    $titleElem.text("常规查询结果解析出错，转入API查询...")
-                    fixTitleAndPicEnhance0($item, $titleElem, avid, true);
+                } catch (e) { // 网页内容解析错误（很可能是请求过快）,出现提示手动点击加载，转入API查询
+                    console.error("[bilibili-fav-fix] 常规查询结果解析出错（很可能是请求过快）");
+                    retryLoad($titleElem, avid, null, function() {
+                        fixTitleAndPicEnhance0($item, $titleElem, avid, true);
+                    });
                 }
             },
             onerror: function(e) {
