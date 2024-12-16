@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         哔哩哔哩(B站|Bilibili)收藏夹Fix (cerenkov修改版)
 // @namespace    http://tampermonkey.net/
-// @version      1.3.0
+// @version      1.3.1
 // @description  修复 哔哩哔哩(www.bilibili.com) 失效的收藏。（可查看av号、简介、标题、封面、数据等）
 // @author       cerenkov
 // @license      GPL-3.0

@@ -87,6 +87,9 @@
 
 ## Changelog
 
+### v1.3.1
+- BugFix：360极速浏览器会获取不到 GM_info.userAgentData.brands
+
 ### v1.3.0
 - BugFix：多余的网址正则匹配导致脚本有时不运行
 - BugFix：完善网络查询过程中的意外错误处理，让脚本不再卡在Loading...上，且控制台和视频标题都提供更详细的错误信息
