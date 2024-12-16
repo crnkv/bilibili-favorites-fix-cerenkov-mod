@@ -55,16 +55,16 @@
 
     let isFirefox = false;
     let isChromium = false;
-    let brands = GM_info.userAgentData.brands;
-    if (brands && brands.length > 0) {
-        if (brands.some(x => x.brand.match(/firefox/i))) {
+    let uaData = GM_info.userAgentData;
+    if (uaData && uaData.brands && uaData.brands.length > 0) {
+        if (uaData.brands.some(x => (x.brand && x.brand.match(/firefox/i)))) {
             isFirefox = true;
-        } else if (brands.some(x => x.brand.match(/chromium|chrome|edge/i))) {
+        } else if (uaData.brands.some(x => (x.brand && x.brand.match(/chromium|chrome|edge/i)))) {
             isChromium = true;
         }
     }
     // 阿B是真丢人啊，Firefox下，一旦标题<a>内文字过长出现text-overflow，菜单按钮就无法在鼠标hover时显示
-    // 这么基础的毛病，新UI铺开之前都测试不出来吗？
+    // 这么基础的毛病，新UI铺开之前都测试不出来吗
     // 对于一般视频问题不大，但失效恢复视频的功能很需要这个功能菜单
     // 在阿B修好之前，只能我代为临时处理一下了
     function stripTitleFirefox(title) {
