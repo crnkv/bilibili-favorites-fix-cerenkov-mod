@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         哔哩哔哩(B站|Bilibili)收藏夹Fix (cerenkov修改版)
 // @namespace    http://tampermonkey.net/
-// @version      1.3.1
+// @version      1.3.2
 // @description  修复 哔哩哔哩(www.bilibili.com) 失效的收藏。（可查看av号、简介、标题、封面、数据等）
 // @author       cerenkov
 // @license      GPL-3.0
@@ -52,28 +52,6 @@
      * @type {Number}
      */
     const interval = 2000;
-
-    let isFirefox = false;
-    let isChromium = false;
-    let uaData = GM_info.userAgentData;
-    if (uaData && uaData.brands && uaData.brands.length > 0) {
-        if (uaData.brands.some(x => (x.brand && x.brand.match(/firefox/i)))) {
-            isFirefox = true;
-        } else if (uaData.brands.some(x => (x.brand && x.brand.match(/chromium|chrome|edge/i)))) {
-            isChromium = true;
-        }
-    }
-    // 阿B是真丢人啊，Firefox下，一旦标题<a>内文字过长出现text-overflow，菜单按钮就无法在鼠标hover时显示
-    // 这么基础的毛病，新UI铺开之前都测试不出来吗
-    // 对于一般视频问题不大，但失效恢复视频的功能很需要这个功能菜单
-    // 在阿B修好之前，只能我代为临时处理一下了
-    function stripTitleFirefox(title) {
-        if (isFirefox && title.length > 24) {
-            return title.slice(0,24)+"..";
-        } else {
-            return title;
-        }
-    }
 
     // 是否B站新网页界面，在首次（每次）运行handleFavorites()时会检测网页并记录在该变量中
     let isNewUI = false;
@@ -651,7 +629,7 @@ ${partsInfo}播放数：${media.cnt_info.play}
         $aElems.attr("href", `https://www.biliplus.com/${history ? history : ""}video/av${avid}/`);
 
         // 设置标题文字
-        $titleElem.text(stripTitleFirefox(title));
+        $titleElem.text(title);
         $titleElem.attr("title", title);
 
         // 保存标题和子P标题到节点上，以便让 showDetail 读取
