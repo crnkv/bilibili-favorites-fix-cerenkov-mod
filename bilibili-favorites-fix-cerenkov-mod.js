@@ -136,7 +136,84 @@
      * @param  {$节点} $targetItems 失效收藏节点集
      */
     function showDetail($targetItems) {
-        const url = getBilibiliApiUrl();
+        let fid = window.location.href.match(/fid=(\d+)/i);
+        if (fid) {
+            fid = fid[1];
+        } else if (isNewUI) {
+            fid = $("div.fav-sidebar-item:has(.vui_sidebar-item--active)").first().attr("id");
+        } else {
+            fid = $("li.fav-item.cur").first().attr("fid");
+        }
+        if (fid) {
+            fetchAndShowDetail(getBilibiliApiUrl(fid), $targetItems);
+        } else {
+            // 当前网页是默认收藏夹时，获取不到 fid ，要另发一个网络请求去获取默认收藏夹的 fid
+            let mid = window.location.href.match(/\/(\d+)\/favlist/i)[1];
+            GM_xmlhttpRequest({
+                method: 'GET',
+                url: `https://api.bilibili.com/x/v3/fav/folder/created/list-all?up_mid=${mid}`,
+                responseType: "json",
+                onload: function(res) {
+                    const json = res.response;
+                    let fid = json.data.list[0].id;
+                    fetchAndShowDetail(getBilibiliApiUrl(fid), $targetItems);
+                }
+            });
+        }
+    }
+
+    function getBilibiliApiUrl(fid) {
+        if (isDebug) console.log(`[bilibili-fav-fix] fid: ${fid}`);
+
+        let pn = 1;
+        if (isNewUI) {
+            pn = $("div.vui_pagenation--btns .vui_button.vui_button--active").text().trim();
+        } else {
+            pn = $("ul.be-pager li.be-pager-item.be-pager-item-active").text().trim();
+        }
+        if (isDebug) console.log(`[bilibili-fav-fix] pn: ${pn}`);
+
+        let order = "mtime";
+        if (isNewUI) {
+            order = $("div.fav-list-header-filter__left div.radio-filter__item--active").first().text().trim();
+        } else {
+            order = $($("div.fav-filters > div")[2]).find("span").first().text().trim();
+        }
+        order = new Map([["最近收藏", "mtime"], ["最多播放", "view"], ["最新投稿", "pubtime"], ["最近投稿", "pubtime"]]).get(order);
+        if (order === undefined) order = "mtime";    // 执行收藏夹搜索时无从得知排序，只能手动指定成“最近收藏”，不保证结果正确
+        if (isDebug) console.log(`[bilibili-fav-fix] order: ${order}`);
+
+        let tid = 0;
+        if (isNewUI) {
+            tid = $("div.fav-list-header-collapse div.radio-filter__item--active").first().text().trim().replace(/\s+\d+/, "");
+        } else {
+            tid = $($("div.fav-filters > div")[1]).find("span").first().text().trim();
+        }
+        tid = new Map([["全部分区", 0], ["动画", 1], ["音乐", 3], ["游戏", 4], ["娱乐", 5], ["电视剧", 11], ["番剧", 13], ["电影", 23], ["知识", 36], ["鬼畜", 119], ["舞蹈", 129], ["时尚", 155], ["生活", 160], ["国创", 167], ["纪录片", 177], ["影视", 181], ["资讯", 202], ["美食", 211], ["动物圈", 217], ["汽车", 223], ["运动", 234], ["科技", 188], ["版权内容", -24]]).get(tid);
+        if (tid === undefined) tid = 0;    // 一些被下线和撤除的分区，无从得知其名称和tid，只能手动指定成“全部分区”，返回的结果很大概率不包含目标视频的数据
+        if (isDebug) console.log(`[bilibili-fav-fix] tid: ${tid}`);
+
+        let searchType = 0;
+        let keyword = "";
+        if (isNewUI) {
+            if ($("div.fav-list-header-filter__desc").length > 0) {
+                searchType = $("div.fav-list-header-filter__right button").first().text().trim();
+                searchType = new Map([["当前", 0], ["全部", 1]]).get(searchType);
+                keyword = encodeURIComponent($("div.fav-list-header-filter__right input").first().val());
+            }
+        } else {
+            if ($("div.search-results-num").length > 0) {
+                searchType = $("div.search-types > div > div").first().text().trim();
+                searchType = new Map([["当前", 0], ["全部", 1]]).get(searchType);
+                keyword = encodeURIComponent($("input.search-fav-input").first().val());
+            }
+        }
+        if (isDebug) console.log(`[bilibili-fav-fix] searchType: ${searchType}\n[bilibili-fav-fix] keyword: ${keyword}`);
+
+        return `https://api.bilibili.com/x/v3/fav/resource/list?media_id=${fid}&pn=${pn}&ps=${isNewUI ? 40 : 20}&keyword=${keyword}&order=${order}&type=${searchType}&tid=${tid}&platform=web`;
+    }
+
+    function fetchAndShowDetail(url, $targetItems) {
         GM_xmlhttpRequest({
             method: 'GET',
             url: url,
@@ -148,7 +225,7 @@
                 $targetItems.each(function(i, item) {
                     const $item = $(item);
                     const bvid = getItemBVID($item);
-                    if (isDebug) console.log(`[bilibili-fav-fix] showDetail: ${bvid}`);
+                    if (isDebug) console.log(`[bilibili-fav-fix] fetchAndShowDetail: ${bvid}`);
 
                     let media = medias.filter((m) => (m.bvid == bvid));
                     if (media.length > 0) {
@@ -210,65 +287,6 @@ ${partsInfo}播放数：${media.cnt_info.play}
                 });
             }
         });
-    }
-
-    function getBilibiliApiUrl() {
-        let fid = window.location.href.match(/fid=(\d+)/i);
-        if (fid) {
-            fid = fid[1];
-        } else if (isNewUI) {
-            fid = $("div.fav-sidebar-item:has(.vui_sidebar-item--active)").first().attr("id");
-        } else {
-            fid = $("li.fav-item.cur").first().attr("fid");
-        }
-        if (isDebug) console.log(`[bilibili-fav-fix] fid: ${fid}`);
-
-        let pn = 1;
-        if (isNewUI) {
-            pn = $("div.vui_pagenation--btns .vui_button.vui_button--active").text().trim();
-        } else {
-            pn = $("ul.be-pager li.be-pager-item.be-pager-item-active").text().trim();
-        }
-        if (isDebug) console.log(`[bilibili-fav-fix] pn: ${pn}`);
-
-        let order = "mtime";
-        if (isNewUI) {
-            order = $("div.fav-list-header-filter__left div.radio-filter__item--active").first().text().trim();
-        } else {
-            order = $($("div.fav-filters > div")[2]).find("span").first().text().trim();
-        }
-        order = new Map([["最近收藏", "mtime"], ["最多播放", "view"], ["最新投稿", "pubtime"], ["最近投稿", "pubtime"]]).get(order);
-        if (order === undefined) order = "mtime";    // 执行收藏夹搜索时无从得知排序，只能手动指定成“最近收藏”，不保证结果正确
-        if (isDebug) console.log(`[bilibili-fav-fix] order: ${order}`);
-
-        let tid = 0;
-        if (isNewUI) {
-            tid = $("div.fav-list-header-collapse div.radio-filter__item--active").first().text().trim().replace(/\s+\d+/, "");
-        } else {
-            tid = $($("div.fav-filters > div")[1]).find("span").first().text().trim();
-        }
-        tid = new Map([["全部分区", 0], ["动画", 1], ["音乐", 3], ["游戏", 4], ["娱乐", 5], ["电视剧", 11], ["番剧", 13], ["电影", 23], ["知识", 36], ["鬼畜", 119], ["舞蹈", 129], ["时尚", 155], ["生活", 160], ["国创", 167], ["纪录片", 177], ["影视", 181], ["资讯", 202], ["美食", 211], ["动物圈", 217], ["汽车", 223], ["运动", 234], ["科技", 188], ["版权内容", -24]]).get(tid);
-        if (tid === undefined) tid = 0;    // 一些被下线和撤除的分区，无从得知其名称和tid，只能手动指定成“全部分区”，返回的结果很大概率不包含目标视频的数据
-        if (isDebug) console.log(`[bilibili-fav-fix] tid: ${tid}`);
-
-        let searchType = 0;
-        let keyword = "";
-        if (isNewUI) {
-            if ($("div.fav-list-header-filter__desc").length > 0) {
-                searchType = $("div.fav-list-header-filter__right button").first().text().trim();
-                searchType = new Map([["当前", 0], ["全部", 1]]).get(searchType);
-                keyword = encodeURIComponent($("div.fav-list-header-filter__right input").first().val());
-            }
-        } else {
-            if ($("div.search-results-num").length > 0) {
-                searchType = $("div.search-types > div > div").first().text().trim();
-                searchType = new Map([["当前", 0], ["全部", 1]]).get(searchType);
-                keyword = encodeURIComponent($("input.search-fav-input").first().val());
-            }
-        }
-        if (isDebug) console.log(`[bilibili-fav-fix] searchType: ${searchType}\n[bilibili-fav-fix] keyword: ${keyword}`);
-
-        return `https://api.bilibili.com/x/v3/fav/resource/list?media_id=${fid}&pn=${pn}&ps=${isNewUI ? 40 : 20}&keyword=${keyword}&order=${order}&type=${searchType}&tid=${tid}&platform=web`;
     }
 
     function getItemBVID($item) {
