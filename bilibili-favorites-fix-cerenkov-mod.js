@@ -247,7 +247,7 @@
     // - queryFailed 调用 queryCached
     // - queryCached 条件性调用 refineBiliplusQuery （如果有 refine 需求）
     // - startBilibiliApiQuery 设定是否需要 refine 的条件，且条件性调用 recoverHiddenItems
-    // - 最终负责执行的是 setCoverLink setTitleText setCoverPic setTooltip replaceTooltip replaceAuthorText
+    // - 最终负责执行的是 setTitleLink setTitleText setCoverPic setTooltip replaceTooltip replaceAuthorText
     function handleFavorites() {
         if (isDebug) console.log(`[bilibili-fav-fix] isNewUI: ${isNewUI}`);
 
@@ -419,11 +419,10 @@
         cache.update(avid, "archive", archiveHit);  // 取值bp jj 或undefined
         // 设置超链接
         if (archiveHit == "bp") {
-            setCoverLink($item, `https://www.biliplus.com/video/av${avid}/`);
+            setTitleLink($item, `https://www.biliplus.com/video/av${avid}/`);
         } else if (archiveHit == "jj") {
-            setCoverLink($item, `https://www.jijidown.com/api/v1/video/get_info?id=${avid}`);
+            setTitleLink($item, `https://www.jijidown.com/api/v1/video/get_info?id=${avid}`);
         }  // 明明是hit但却archiveHit undefined以至于没有coverLink的情况存在，就是biliplus网络故障中断，暂由jijidown得到hit的临时情况
-
         // 设置标题
         cache.update(avid, "title", title);
         setTitleText($item, title, true);
@@ -466,11 +465,10 @@
         }
         // 设置超链接
         if (c.archive == "bp") {
-            setCoverLink($item, `https://www.biliplus.com/video/av${avid}/`);
+            setTitleLink($item, `https://www.biliplus.com/video/av${avid}/`);
         } else if (c.archive == "jj") {
-            setCoverLink($item, `https://www.jijidown.com/api/v1/video/get_info?id=${avid}`);
+            setTitleLink($item, `https://www.jijidown.com/api/v1/video/get_info?id=${avid}`);
         }
-
         // 设置标题
         if (c.title) {  // 有缓存title则先显示，可能会被biliAPI之后修改
             setTitleText($item, c.title, true);  // 仅当成功恢复时修改样式
@@ -566,6 +564,7 @@
         }
 
         let fid = window.location.href.match(/fid=(\d+)/i);
+        let mid = window.location.href.match(/bilibili\.com\/(\d+)\/favlist/i)[1];
         if (fid) {
             fid = fid[1];
         } else if (isNewUI) {
@@ -579,14 +578,33 @@
             fid = json.data.list[0].id;
         }
 
-        let json = await fetchJSON(getBilibiliApiUrl(fid, apiType, 1));
+        let url = getBilibiliApiUrl(fid, apiType, 1);
+
+        let origFid;
+        let mixedSearch = !url.includes("&keyword=&") && url.includes("&type=1&");  // 在全部收藏夹里搜索
+        if (mixedSearch) {
+            if (isDebug) console.log(`[bilibili-fav-fix] detected: keyword search in all favorites, fetch public fav`);
+            let json = await fetchJSON(`https://api.bilibili.com/x/v3/fav/folder/created/list-all?up_mid=${mid}`);
+            if (!json) return;  // TODO: (!json)时的下位替代
+            let publicFavs = json.data.list.filter(fav => fav.attr % 2 == 0);
+            if (publicFavs.length == 0) return;  // TODO: (publicFavs.length == 0)时的下位替代
+            origFid = fid;
+            fid = publicFavs[0].id;  // 随便取一个公开收藏夹的fid
+            apiType = "public";
+            url = getBilibiliApiUrl(fid, apiType, 1);
+        }
+
+        let json = await fetchJSON(url);
         if (!json) return;
 
-        if (json.code !== 0) {
+        if (json.code !== 0) {  // -403 访问权限不足
             if (apiType == "public") {
                 console.warn(`[bilibili-fav-fix] bilibili public API failed, now use private API`);
+                mixedSearch = false;  // 退回
+                fid = origFid;
                 apiType = "private";
-                json = await fetchJSON(getBilibiliApiUrl(fid, apiType, 1));
+                url = getBilibiliApiUrl(fid, apiType, 1);
+                json = await fetchJSON(url);
                 if (!json) return;
             }
             if (json.code !== 0) {
@@ -610,7 +628,40 @@
             }
         }
 
-        const medias = json?.data?.medias || [];  // .medias可以undefined
+        let medias = json?.data?.medias || [];  // .medias可以undefined
+
+        if (mixedSearch) {
+            if (isDebug) console.log(`[bilibili-fav-fix] also fetch private fav for complement`);
+            // 使用privateAPI得到B站搜索原本展示的视频列表（包含私密收藏夹内容），以此为基础将publicAPI（不含私密收藏夹内容但包含up主隐藏视频）的丰富信息更新、替换上去
+            let json3 = await fetchJSON(getBilibiliApiUrl(fid, "private", 1));
+            if (!json3) return;
+            let baseMedias = json3.data.medias;
+            let i = -1;
+            for (let media of medias) {
+                let match = baseMedias.map(m => m.id).indexOf(media.id);
+                if (match == -1) {
+                    if (media.rights?.autoplay == 0) {
+                        // 在publicAPI medias里面 而不在privateAPI baseMedia（实际展示）里面的隐藏视频
+                        i = i+1;
+                        baseMedias.splice(i, 0, media);
+                        if (isDebug) console.log(`[bilibili-fav-fix] ${i} ${media.title} inserted`);
+                    } else {
+                        if (isDebug) console.log(`[bilibili-fav-fix] ${media.title} ignored (not hidden, just not on this page)`);
+                    }
+                } else {
+                    i = match;
+                    baseMedias.splice(i, 1, media);
+                    if (isDebug) console.log(`[bilibili-fav-fix] ${i} ${media.title} replaced`);
+                }
+            }
+            medias = baseMedias;
+            // if (isNewUI) {
+            //     medias = medias.slice(0, 40);
+            // } else {
+            //     medias = medias.slice(0, 20);
+            // }
+        }
+
         NTotalItems = medias.length;
         if (isDebug) console.log(`[bilibili-fav-fix] ${NTotalItems} items in total, ${$allItems.length} items visible`);
 
@@ -740,12 +791,6 @@
             setTitleText($item, media.title, false);  // 防止字符转义，在这里插入media.title
             $item.attr("style", `border: 0; background-color:${recoveredItemColor}; box-shadow: 0 2px 30px ${recoveredItemColor}, 0 -2px 30px ${recoveredItemColor}, -2px 0 30px ${recoveredItemColor}, 2px 0 30px ${recoveredItemColor};`);
 
-            // 点击封面复制稿件信息
-            $item.data("coverElem").click(function() {
-                GM_setClipboard($item.data("coverElem").attr("title"), "text");
-                tipSuccess("稿件信息复制成功！");
-            });
-
             let tips = "（提示：请点击封面从而复制视频信息。这种是被隐藏的视频，即被up主设置为“仅自己可见”的视频，常表现为“收藏夹缺了一格”，不同于被B站删除/退回的失效视频。只有在公开收藏夹中时，脚本才能将其恢复出来）";
             if (media.title !== "已失效视频" && media.title !== "" && media.pages) {
                 setTooltip($item, media, media.pages.map(page => page.title), tips);
@@ -820,7 +865,16 @@ ${media.page > 1 ? `分P数量：${media.page}\n` : ""}${partsStr ? `子P标题�
 弹幕数：${media.cnt_info.danmaku}
 ${media.cnt_info.thumb_up !== 0 ? `点赞数：${media.cnt_info.thumb_up}\n` : ""}${media.cnt_info.coin !== 0 ? `投币数：${media.cnt_info.coin}\n` : ""}${media.cnt_info.reply !== 0 ? `回复数：${media.cnt_info.reply}\n` : "" }失效原因：${reason}
 ${tips}`;
-        $item.data("coverElem").attr("title", tooltip);
+
+        const $coverElem = $item.data("coverElem");
+        $coverElem.attr("title", tooltip);
+        $coverElem.attr("href", "javascript:void(0);");
+        $coverElem.attr("target", "_self");
+        $coverElem.click(function() {
+            GM_setClipboard($item.data("coverElem").attr("title"), "text");
+            tipSuccess("稿件信息复制成功！");
+        });
+
     }
 
 
@@ -902,11 +956,11 @@ ${tips}`;
         $item.data("avid", avid);
     }
 
-    function setCoverLink($item, url) {
-        const $coverElem = $item.data("coverElem");
+    function setTitleLink($item, url) {
+        const $titleElem = $item.data("titleElem");
         if (url) {
-            $coverElem.attr("href", url);
-            $coverElem.attr("target", "_blank");
+            $titleElem.attr("href", url);
+            $titleElem.attr("target", "_blank");
         }
     }
 
