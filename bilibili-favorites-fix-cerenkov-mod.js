@@ -580,7 +580,7 @@
 
         let url = getBilibiliApiUrl(fid, apiType, 1);
 
-        let origFid;
+        let origFid = fid;
         let mixedSearch = !url.includes("&keyword=&") && url.includes("&type=1&");  // 在全部收藏夹里搜索
         if (mixedSearch) {
             if (isDebug) console.log(`[bilibili-fav-fix] detected: keyword search in all favorites, fetch public fav`);
@@ -588,7 +588,6 @@
             if (!json) return;  // TODO: (!json)时的下位替代
             let publicFavs = json.data.list.filter(fav => fav.attr % 2 == 0);
             if (publicFavs.length == 0) return;  // TODO: (publicFavs.length == 0)时的下位替代
-            origFid = fid;
             fid = publicFavs[0].id;  // 随便取一个公开收藏夹的fid
             apiType = "public";
             url = getBilibiliApiUrl(fid, apiType, 1);
