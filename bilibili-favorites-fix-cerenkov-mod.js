@@ -364,7 +364,7 @@
     }
 
 
-    function startJijidownQuery($queryItems, archiveHit, timeDelay = 2) {
+    function startJijidownQuery($queryItems, archiveHit, timeDelay = 3) {
         if (isDebug) console.log(`[bilibili-fav-fix] startJijidownQuery for ${Object.keys($queryItems).length} items`);
         for (let avid in $queryItems) {  // 并发网络请求 for 循环
             if (isDebug) console.log(`[bilibili-fav-fix] startJijidownQuery for ${avid}`);
@@ -376,8 +376,9 @@
                         if (archiveHit !== "bp")  // 排除仅仅是想找更好的封面图的情况
                             queryFailed($queryItems[avid], avid);
                     } else if (json.code == 0 || json.upid == undefined) {
+                        if (timeDelay > 20) return;  // 阻止无限重试
                         if (isDebug) console.log(`[bilibili-fav-fix] jijidown 请求过快 ${avid} ${timeDelay}秒后重试`);
-                        setTimeout(startJijidownQuery, timeDelay * 1000, Object.fromEntries([[avid, $queryItems[avid]]]), archiveHit, timeDelay+2);
+                        setTimeout(startJijidownQuery, timeDelay * 1000, Object.fromEntries([[avid, $queryItems[avid]]]), archiveHit, timeDelay+3);
                     } else if (json.upid == -1 || json.upid == 0 || json.title == "视频去哪了呢？" || json.title == "该视频或许已经被删除了" || (json.title == avid && json.img == "")) {
                         if (isDebug) console.log(`[bilibili-fav-fix] jijidown failed for ${avid}`);
                         if (archiveHit == "jj")  // 如果是bp则已经在queryHit中更新过了，如果是undefined则无法确认更新
