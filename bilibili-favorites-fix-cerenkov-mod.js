@@ -1,12 +1,12 @@
 // ==UserScript==
 // @name         哔哩哔哩(B站|Bilibili)收藏夹Fix (cerenkov修改版)
 // @namespace    http://tampermonkey.net/
-// @version      1.4.2
+// @version      1.4.3
 // @description  修复 哔哩哔哩(www.bilibili.com) 失效的视频收藏、和被up主隐藏的视频。（可查看av号、简介、标题、封面、数据等）
-// @note         1.4.0大版本主要更新：
+// @note         1.4.* 版本主要更新：
 // @note         支持恢复被隐藏（up主“仅自己可见”）的视频信息，让收藏夹不再“缺一角”
-// @note         支持同时查询 biliplus jijidown 以及 B站官方API，建议将收藏夹设为公开，可以恢复更多视频信息，事后再改回私密
-// @note         查询结果缓存在篡改猴的本地存储，刷新标签页、关闭浏览器也不再丢失数据
+// @note         多个数据来源： biliplus jijidown B站官方鉴权API、 B站官方非鉴权API，最大程度恢复信息。建议将收藏夹设为公开，可以查询并恢复更多视频信息，事后再改回私密
+// @note         查询结果缓存在篡改猴（Tampermonkey）的本地存储，免除对同一个失效视频的反复查询，刷新标签页、关闭浏览器也不再丢失数据
 // @author       cerenkov
 // @license      GPL-3.0
 // @match        *://space.bilibili.com/*/favlist*
@@ -63,28 +63,32 @@
         },
         delete: function(avid, key) {
             if (key == undefined) {
-                GM_deleteValue(avid);  // cache.delete(avid) 删除一条缓存对象
+                GM_deleteValue(avid);  // cache.delete(avid) 删除一条avid缓存对象
             } else {
                 let c = GM_getValue(avid, {});
                 delete c[key];
-                GM_setValue(avid, c);  // cache.delete(avid, key) 删除缓存对象的对应属性
+                GM_setValue(avid, c);  // cache.delete(avid, key) 删除avid缓存对象的对应key属性
             }
         },
         set: function(avid, key, value) {
             if (key == undefined) {
                 value = avid;
                 if (typeof value !== "object") throw "格式不正确";
-                GM_setValues(value);  // cache.set(value) 把 value 对象内的所有项都覆盖保存到所有缓存
+                GM_setValues(value);  // cache.set(value) 把 value 对象内的所有avid项都覆盖保存到所有缓存
             } else if (value == undefined) {  // 注意永远不要故意传入value=undefined，应该要用delete方法
                 value = key;
                 if (typeof value !== "object") throw "格式不正确";
-                GM_setValue(avid, value);  // cache.set(avid, value) 把 value 对象覆盖保存到对应缓存
+                if (Object.keys(value).length == 0) {
+                    this.delete(avid);  // cache.set(avid, {}) 删除对应avid缓存对象
+                } else {
+                    GM_setValue(avid, value);  // cache.set(avid, value) 把 value 对象覆盖保存到对应avid缓存对象
+                }
             } else {
                 if (key == "title")
                     value = $("<div/>").html(value).text();  // decode HTML entities
                 let c = GM_getValue(avid, {});
                 c[key] = value;
-                GM_setValue(avid, c);  // cache.set(avid, key, value) 把 value 值覆盖保存到对应缓存的对应属性
+                GM_setValue(avid, c);  // cache.set(avid, key, value) 把 value 值覆盖保存到对应avid缓存的对应key属性
             }
         },
         get: function(avid, key, defaultValue) {
@@ -111,10 +115,10 @@
             if (avid == undefined) {
                 return GM_getValues(GM_listValues());  // cache.get() 返回所有缓存
             } else if (key == undefined) {
-                return GM_getValue(avid, undefined);  // cache.get(avid) 返回一条缓存对象（未命中时返回 undefined ）
+                return GM_getValue(avid, undefined);  // cache.get(avid) 返回一条avid缓存对象（未命中时返回 undefined ）
             } else {
-                let v = GM_getValue(avid, {})[key];  // cache.get(avid, key) 返回对应缓存的对应属性（未命中时返回 switch-case 指定的 defaultValue ）
-                return v == undefined ? defaultValue : v;  // cache.get(avid, key, defaultValue) 返回对应缓存的对应属性（未命中时返回 defaultValue ）
+                let v = GM_getValue(avid, {})[key];  // cache.get(avid, key) 返回对应avid缓存的对应key属性（未命中时返回 switch-case 指定的 defaultValue ）
+                return v == undefined ? defaultValue : v;  // cache.get(avid, key, defaultValue) 返回对应avid缓存的对应key属性（未命中时返回 defaultValue ）
             }
         },
         update: function(avid, key, newValue) {
@@ -132,6 +136,7 @@
                     break;
                 case "pic":
                     if (/bfs\/archive\/be27fd62c99036dce67efface486fb0a88ffed06/i.test(newValue)) break;
+                    if (newValue.includes("@")) newValue = newValue.match(/([^@]*)@/)[1];
                     isBetter = (oldValue == "" && newValue !== "") || (!/bfs\/archive/i.test(oldValue) && /bfs\/archive/i.test(newValue));
                     break;
                 case "ff":
@@ -219,18 +224,22 @@
         });
         if (isDebug) console.log(res);
         if (!res) {
-            tipError("收藏夹修复错误：bilibili、biliplus或jijidown的网站无法访问，可能需要检查网络连接并手动刷新重试");
+            tipError(`收藏夹修复错误：${url} 网站无法访问，可能需要检查网络连接并手动刷新重试`);
             return null;
-        } else if (res.status == 502) {  // jijidown 的常见错误，可能是请求过于频繁
+        } else if (res.status == 502 || res.status == 503) {  // jijidown 和 biliplus 的常见错误，应该是请求过于频繁
             console.error(`[bilibili-fav-fix] network connection with status code ${res.status}: ${url}`);
-            return null;
+            if (url.includes("biliplus")) {  // 让返回值可以被优雅地解读为请求过快并处理
+                return {code: -503};
+            } else if (url.includes("jijidown")) {
+                return {code: 0};
+            }
         } else if (res.status !== 200) {
             console.error(`[bilibili-fav-fix] network connection with status code ${res.status}: ${url}`);
-            tipError("收藏夹修复错误：bilibili、biliplus或jijidown的网站无法访问，可能需要检查网络连接并手动刷新重试");
+            tipError(`收藏夹修复错误：${url} 网站无法访问（错误代码${res.status}），可能需要检查网络连接并手动刷新重试`);
             return null;
         } else if (res.response == undefined) {
             console.error(`[bilibili-fav-fix] website not responding a JSON object: ${url}`);
-            tipError("收藏夹修复错误：bilibili、biliplus或jijidown的网站返回的数据格式不正确");
+            tipError(`收藏夹修复错误：${url} 网站返回的数据格式不正确`);
             return null;
         } else {
             return res.response;
@@ -291,7 +300,7 @@
                 addCopyInfoButton($item);
                 addOpenPicButton($item);
                 addSaveLoadCacheButton($item);
-                addDeleteThisButton($item);
+                // addDeleteThisButton($item);
             });
 
             startBilibiliApiQuery($targetItems, $allItems);
@@ -313,38 +322,30 @@
         }
     }
 
-
     async function startBiliplusQuery($queryItems) {
         let avids = Object.keys($queryItems);
         if (isDebug) console.log(`[bilibili-fav-fix] startBiliplusQuery for ${avids.length} items: ${avids.join(', ')}`);
-        for (let [avid, $item] of Object.entries($queryItems)) {
-            setTitleText($item, "正在查询 biliplus ...", false);
+        for (let $item of Object.values($queryItems)) {
+            setTitleText($item, "正在查询 biliplus ...");
         }
         const json = await fetchJSON(`https://www.biliplus.com/api/aidinfo?aid=${avids.join(',')}`);
-        if (!json) {
-            startJijidownQuery($queryItems, undefined);  // 由于网络请求遇到故障中断，姑且尝试jijidown，不代表biliplus上真的没数据
-        } else if (json.code == -503) {
-            // 请求过快，手动点击重试（optional延迟卡5秒）
+        if (!json) {  // 由于网络请求遇到故障中断、网站暂时下线等，重试也无益，姑且尝试jijidown，不代表biliplus上真的没数据
+            startJijidownQuery($queryItems, false);
+        } else if (json.code == -503) {  // 请求过快，手动点击重试
             if (isDebug) console.log(`[bilibili-fav-fix] biliplus 请求过快 for ${avids.length} items: ${avids.join(', ')}`);
-            for (let [avid, $item] of Object.entries($queryItems)) {
-                setTitleText($item, "->请求过快，请点击手动加载<-", false);
-                const $titleElem = getTitleElem($item);
-                $titleElem.attr("href", "javascript:void(0);");
-                $titleElem.attr("target", "_self");
-                $disposableQueryItems = Object.create($queryItems);
-                $titleElem.on("click", function() {
-                    for (let [av, $it] of Object.values($disposableQueryItems)) {
+            for (let $item of Object.values($queryItems)) {
+                setTitleRetry($item, {items: $queryItems}, function(event) {
+                    event.preventDefault();
+                    let $queryIts = event.data.items;  // 取出成局部变量，以便.off()时销毁event.data，函数结束后亦销毁局部变量
+                    for (let $it of Object.values($queryIts)) {
                         getTitleElem($it).off("click");
-                        getTitleElem($it).attr("href", `https://www.bilibili.com/video/${$it.attr("bvid")}`);
-                        getTitleElem($it).attr("target", "_blank");
                     }
-                    startBiliplusQuery($disposableQueryItems);
-                    $disposableQueryItems = null;  // 大概这样可以清空reference、避免内存泄漏(?)
+                    startBiliplusQuery($queryIts);
                 });
             }
         } else if (json.code !== 0) {  // json.code == -404 全无记录 -403 访问权限不足（up主隐藏）
             if (isDebug) console.log(`[bilibili-fav-fix] biliplus no results for ${avids.length} items: ${avids.join(', ')}`);
-            startJijidownQuery($queryItems, "jj");
+            startJijidownQuery($queryItems);
         } else {  // 至少部分avid有记录
             if (isDebug) console.log(`[bilibili-fav-fix] biliplus has ${Object.keys(json.data).length} hits`);
             for (let avid in json.data) {
@@ -354,46 +355,52 @@
                 queryHit($item, avid, info.title, info.pic, info.author, "bp");
                 if (!/bfs\/archive/i.test(info.pic)) {  // 极大概率是失效的旧图片链接
                     if (isDebug) console.log(`[bilibili-fav-fix] query for better pic for ${avid}`);
-                    startJijidownQuery(Object.fromEntries([[avid, $item]]), "bp");
+                    startJijidownQuery(Object.fromEntries([[avid, $item]]), false, true);
                 }
                 delete $queryItems[avid];
             }
             if (Object.keys($queryItems).length > 0)
-                startJijidownQuery($queryItems, "jj");
+                startJijidownQuery($queryItems);
         }
     }
 
 
-    function startJijidownQuery($queryItems, archiveHit, timeDelay = 3) {
+    function startJijidownQuery($queryItems, isDecisive = true, isForPic = false, timeDelay = 3) {
         if (isDebug) console.log(`[bilibili-fav-fix] startJijidownQuery for ${Object.keys($queryItems).length} items`);
-        for (let avid in $queryItems) {  // 并发网络请求 for 循环
+        for (let [avid, $item] of Object.entries($queryItems)) {  // 并发网络请求 for 循环
             if (isDebug) console.log(`[bilibili-fav-fix] startJijidownQuery for ${avid}`);
-            if (archiveHit !== "bp")  // 如果只是为了更好的封面图查询jj，那么不改动
-                setTitleText($queryItems[avid], "正在查询 jijidown ...", false);
+            if (!isForPic) setTitleText($item, "正在查询 jijidown ...");  // 若仅查找封面图则意味着标题已找到，不宜改动
             fetchJSON(`https://www.jijidown.com/api/v1/video/get_info?id=${avid}`)
                 .then(json => {
-                    if (!json) {  // 不update archive nohit，因为网络请求遇到故障中断并不意味着biliplus或jijidown上无archive
-                        if (archiveHit !== "bp")  // 排除仅仅是想找更好的封面图的情况
-                            queryFailed($queryItems[avid], avid);
-                    } else if (json.code == 0 || json.upid == undefined) {
-                        if (timeDelay > 20) return;  // 阻止无限重试
-                        if (isDebug) console.log(`[bilibili-fav-fix] jijidown 请求过快 ${avid} ${timeDelay}秒后重试`);
-                        setTimeout(startJijidownQuery, timeDelay * 1000, Object.fromEntries([[avid, $queryItems[avid]]]), archiveHit, timeDelay+3);
+                    if (!json) {  // 由于网络请求遇到故障中断、网站暂时下线等，重试也无益
+                        if (!isForPic) queryFailed($item, avid);  // 若仅查找封面图则无需动作
+                    } else if (json.code == 0 || json.upid == undefined) {  // 大概率是请求过快
+                        if (isDebug) console.log(`[bilibili-fav-fix] jijidown 请求过快 ${avid}`);
+                        if (!isForPic) {  // 允许修改标题引导点击重试
+                            setTitleRetry($item, {item: $item}, function(event) {
+                                event.preventDefault();
+                                let $it = event.data.item;  // 取出成局部变量，以便.off()时销毁event.data，函数结束后亦销毁局部变量
+                                getTitleElem($it).off("click");
+                                startJijidownQuery(Object.fromEntries([[$it.attr("avid"), $it]]), isDecisive);
+                            });
+                        } else {  // 若仅查找封面图则不修改标题，仅自动重试
+                            if (timeDelay > 10) return;  // 阻止无限重试
+                            if (isDebug) console.log(`[bilibili-fav-fix] jijidown 查询封面图 请求过快 ${avid} ${timeDelay}秒后重试`);
+                            setTimeout(startJijidownQuery, timeDelay * 1000, Object.fromEntries([[avid, $item]]), isDecisive, true, timeDelay + 3);
+                        }
                     } else if (json.upid == -1 || json.upid == 0 || json.title == "视频去哪了呢？" || json.title == "该视频或许已经被删除了" || (json.title == avid && json.img == "")) {
                         if (isDebug) console.log(`[bilibili-fav-fix] jijidown failed for ${avid}`);
-                        if (archiveHit == "jj")  // 如果是bp则已经在queryHit中更新过了，如果是undefined则无法确认更新
-                            cache.update(avid, "archive", "nohit");  // 视频确认 不 存在于biliplus或jijidown的archive中
-                        if (archiveHit !== "bp")  // 排除仅仅是想找更好的封面图的情况
-                            queryFailed($queryItems[avid], avid);
+                        if (isDecisive) cache.update(avid, "archive", "nohit");  // queryFailed是不更新archive的，如果jijidown也失败则需在此断定nohit
+                        if (!isForPic) queryFailed($item, avid);
                     } else {
                         if (isDebug) console.log(`[bilibili-fav-fix] jijidown retrieved info for ${avid}`);
-                        if (archiveHit == "bp") {  // 仅仅是想找更好的封面图的情况
+                        if (!isForPic) {
+                            queryHit($item, avid, json.title, json.img, json.up.author, isDecisive ? "jj" : undefined);
+                        } else {
                             let pic = cache.update(avid, "pic", json.img);
-                            setCoverPic($queryItems[avid], pic, cache.get(avid, "ff"));
+                            setCoverPic($item, pic, cache.get(avid, "ff"));
                             if (/bfs\/archive/i.test(pic))
                                 if (isDebug) console.log(`[bilibili-fav-fix] jijidown got better pic for ${avid}`);
-                        } else {
-                            queryHit($queryItems[avid], avid, json.title, json.img, json.up.author, archiveHit);
                         }
                     }
                 });
@@ -401,10 +408,10 @@
     }
 
 
-    function queryHit($item, avid, title, pic, author, archiveHit) {
+    function queryHit($item, avid, title, pic, author, archive) {
         if (isDebug) console.log(`[bilibili-fav-fix] queryHit for ${avid}`);
         // 检查refine需求
-        if (archiveHit == "bp") {
+        if (archive == "bp") {
             if ($item.attr("_refineParts") == "needRefine") {
                 $item.attr("_refineParts", "");
                 refineBiliplusQuery($item, avid);
@@ -413,13 +420,13 @@
             }
         }
         // 仅在hit函数时才更新archive，failed或cached时在调用函数前更新
-        cache.update(avid, "archive", archiveHit);  // 取值bp jj 或undefined
+        cache.update(avid, "archive", archive);  // 取值bp jj 或undefined
         // 设置超链接
-        if (archiveHit == "bp") {
+        if (archive == "bp") {
             setTitleLink($item, `https://www.biliplus.com/video/av${avid}/`);
-        } else if (archiveHit == "jj") {
+        } else if (archive == "jj") {
             setTitleLink($item, `https://www.jijidown.com/api/v1/video/get_info?id=${avid}`);
-        }  // 明明是hit但却archiveHit undefined以至于没有coverLink的情况存在，就是biliplus网络故障中断，暂由jijidown得到hit的临时情况
+        }  // 明明是queryHit 但却archive==undefined以至于没有coverLink的情况存在，就是biliplus网络故障中断，暂由jijidown得到hit的时候
         // 设置标题
         cache.update(avid, "title", title);
         setTitleText($item, title, true);
@@ -443,8 +450,8 @@
 
     function queryFailed($item, avid) {
         if (isDebug) console.log(`[bilibili-fav-fix] queryFailed for ${avid}`);
-        let c = cache.get(avid);
-        if (c) queryCached($item, avid, c);
+        let c = cache.get(avid) || {};
+        queryCached($item, avid, c);
     }
 
 
@@ -469,9 +476,9 @@
         if (c.title) {  // 有缓存title则先显示，可能会被biliAPI之后修改
             setTitleText($item, c.title, true);  // 仅当成功恢复时修改样式
         } else if (getTitleElem($item).attr("_noguesses") == "true") {  // 没有缓存，biliAPI也没有
-            setTitleText($item, `查不到标题（${avid}）`, false);
+            setTitleText($item, `查不到标题（${avid}）`);
         } else {  // 没有缓存，但biliAPI之后可能有
-            setTitleText($item, `正在查询 bilibili API ...`, false);
+            setTitleText($item, `正在查询 bilibili API ...`);
         }
         getTitleElem($item).attr("_handover", "true");
 
@@ -480,16 +487,16 @@
     }
 
 
-    async function refineBiliplusQuery($item, avid, retry) {
+    async function refineBiliplusQuery($item, avid, retry = 0) {
         if (isDebug) console.log(`[bilibili-fav-fix] refineBiliplusQuery for ${avid}`);
         const json = await fetchJSON(`https://www.biliplus.com/api/view?id=${avid}`);
         if (!json) {  // 网络连接故障中断或JSON格式错误
             return;
         } else if (json.code == -503) {  // 请求过快
-            if (retry == undefined)
-                // 主要是不想将已经修复好显示好的标题又改成 "->请求过快，请点击手动加载<-"，没必要，反正只要parts未查询、记录进cache，刷新页面后还会再发起查询的
+            if (retry < 2) {  // 仅自动重试两次，但由于needRefine始终存在，以后还会有重试的机会
                 if (isDebug) console.log(`[bilibili-fav-fix] refineBiliplusQuery 请求过快，10秒后重试`);
-                setTimeout(refineBiliplusQuery, 10000, $item, avid, 1);  // 暂定只重试一遍，如果还是请求过快就算了
+                setTimeout(refineBiliplusQuery, 10000, $item, avid, retry + 1);
+            }
             return;
         } else if (json.code == -404) {  // 查询无结果
             return;
@@ -650,11 +657,6 @@
                 }
             }
             medias = baseMedias;
-            // if (isNewUI) {
-            //     medias = medias.slice(0, 40);
-            // } else {
-            //     medias = medias.slice(0, 20);
-            // }
         }
 
         NTotalItems = medias.length;
@@ -686,9 +688,9 @@
 
             if (getTitleElem($item).attr("_handover") == "true") {  // 在biliplus和jijidown未有结果(handover)之前，title留作交互提示使用而不做改动
                 if (media.title) {
-                    setTitleText($item, media.title, true);  // 仅当成功恢复时有样式
+                    setTitleText($item, media.title, true);
                 } else {
-                    setTitleText($item, `查不到标题（${avid}）`, false);
+                    setTitleText($item, `查不到标题（${avid}）`);
                 }
             }
             if (!media.title) getTitleElem($item).attr("_noguesses", "true");  // 如果biliAPI先得到信息，那么将其失败记录在案
@@ -734,6 +736,7 @@
         if (isDebug) console.log(`[bilibili-fav-fix] recovering ${NTotalItems - $allItems.length} hidden items`);
         let allBvids = $allItems.map($item => $item.attr("bvid"));
 
+        let $queryItems = {};
         for (let i = 0; i < NTotalItems; i++) {
             let media = medias[i];
             if (allBvids.includes(media.bvid)) continue;
@@ -783,7 +786,7 @@
 </li>`);
             }
             setupItem($item);
-            setTitleText($item, media.title, false);  // 防止字符转义，在这里插入media.title
+            setTitleText($item, media.title);  // 防止字符转义，在这里插入media.title
             $item.attr("style", `border: 0; background-color:${recoveredItemColor}; box-shadow: 0 2px 30px ${recoveredItemColor}, 0 -2px 30px ${recoveredItemColor}, -2px 0 30px ${recoveredItemColor}, 2px 0 30px ${recoveredItemColor};`);
 
             let tips = "（提示：请点击封面从而复制视频信息。这种是被隐藏的视频，即被up主设置为“仅自己可见”的视频，常表现为“收藏夹缺了一格”，不同于被B站删除/退回的失效视频。只有在公开收藏夹中时，脚本才能将其恢复出来）";
@@ -797,7 +800,7 @@
                 if (c && c.archive !== undefined) {
                     queryCached($item, avid, c);
                 } else {
-                    startBiliplusQuery(Object.fromEntries([[avid, $item]]));
+                    $queryItems[avid] = $item;
                 }
                 $item.attr("_tips", tips);
                 $targetItems.push($item);
@@ -823,6 +826,9 @@
             observer.observe($rootItem[0], observerOptions);
             $allItems.splice(i, 0, $item);
         }
+
+        if (Object.keys($queryItems).length > 0)
+            startBiliplusQuery($queryItems);
     }
 
 
@@ -952,11 +958,11 @@ ${tips}`;
     }
 
     function getCoverElem($item) {
-        return $($item.find("a")[0]);
+        return $item.find("a").eq(0);
     }
 
     function getTitleElem($item) {
-        return $($item.find("a")[1]);
+        return $item.find("a").eq(1);
     }
 
     function getImgElem($item) {
@@ -971,15 +977,15 @@ ${tips}`;
         }
     }
 
-    function setTitleLink($item, url) {
+    function setTitleLink($item, url, target = "_blank") {
         const $titleElem = getTitleElem($item);
         if (url) {
             $titleElem.attr("href", url);
-            $titleElem.attr("target", "_blank");
+            $titleElem.attr("target", target);
         }
     }
 
-    function setTitleText($item, title, markStrike) {
+    function setTitleText($item, title, markStrike = false) {
         const $titleElem = getTitleElem($item);
         $titleElem.text(title);
         $titleElem.attr("title", title);
@@ -989,6 +995,11 @@ ${tips}`;
             // 收藏时间 + UP主（新UI） 增加 删除线
             getSubtitleElem($item).attr("style", "text-decoration:line-through");
         }
+    }
+
+    function setTitleRetry($item, data, handler) {
+        setTitleText($item, "请求过快，请点击手动加载");
+        getTitleElem($item).on("click", data, handler);
     }
 
     function setCoverPic($item, pic, first_frame) {
@@ -1019,7 +1030,7 @@ ${tips}`;
     function replaceAuthorText($item, author) {
         let $authorElem;
         if (isNewUI) {
-            $authorElem = $($item.find(".bili-video-card__text")[1]).find("span");
+            $authorElem = $item.find(".bili-video-card__text").eq(1).find("span");
         } else {
             $authorElem = $item.find(".author");
         }
@@ -1075,11 +1086,11 @@ ${tips}`;
 
     function addSaveLoadCacheButton($item) {
         addButton($item, "导出/导入缓存", function () {
-            if (unsafeWindow.confirm("【导出】点击确定，即可将查询到的标题/封面/分P缓存数据导出至剪贴板；点击取消，可粘贴导入缓存数据")) {
+            if (unsafeWindow.confirm("【导出】\n点击确定，即可将查询到的标题/封面/子P标题等的本地缓存导出至剪贴板；\n点击取消，可将之前导出的字符串用粘贴导入本地缓存。")) {
                 GM_setClipboard(cache.export(), "text");
                 alert("缓存导出至剪贴板成功！");
             } else {
-                let input = unsafeWindow.prompt("【导入】粘贴输入缓存数据，即可覆盖性导入（注意：1.错误格式的数据可能会导入成功但脚本运行出错且难以恢复； 2.如果不想覆盖本地缓存，可在前面加一个加号“ + ”前缀，实现增量导入； 3.如果输入内容是“ {} ”，本地缓存就会被空数据覆盖）");
+                let input = unsafeWindow.prompt("【导入】\n将导出的字符串粘贴输入，会覆盖性导入到浏览器本地缓存。\n注意：1.错误格式的字符串可能会导入成功但脚本运行出错；\n2.如果输入内容是“ {} ”，整个本地缓存就会被空数据覆盖，即清空；\n3.如果不想覆盖本地缓存，可在前面加一个加号“ + ”前缀，实现增量导入（以视频为单位），如“ +{\"10086\": {......}, \"114514\": {......}} ”；\n4.用增量导入可以针对性地覆盖或清除特定视频缓存数据，如“ +{\"10086\": {}} ”便使得 avid 10086 的视频本地缓存被空数据覆盖，而不影响其他。");
                 if (input) {
                     try {
                         cache.import(input);
@@ -1092,49 +1103,40 @@ ${tips}`;
         });
     }
 
-    function addButton($item, name, fun, successMsg) {
-        let fun2 = fun;
-        if (successMsg) {
-            if (isNewUI) {
-                fun2 = function() {
-                    fun(this);
+    function addButton($item, name, handler, successMsg) {
+        let handler2 = handler;
+        if (isNewUI) {
+            if (successMsg)
+                handler2 = function() {
+                    handler(this);
                     $(this).text(successMsg);
-                    setTimeout(function($menuItem) {
-                        $menuItem.text(name)
-                    }, 2000, $(this));
+                    setTimeout(function($menuItem) { $menuItem.text(name); }, 2000, $(this));
                 };
-            } else {
-                fun2 = function() {
-                    fun(this);
+            const $dropdownTrigger = $item.find(".bili-card-dropdown").first();
+            $dropdownTrigger.one("mouseenter", {handler: handler2}, function(event) {
+                setTimeout(function(handler) {
+                    // 延时获取dropdownMenu元素，因为B站新UI动态生成该元素
+                    const $dropdownMenu = $(".bili-card-dropdown-popper.visible").first();
+                    if (! $dropdownMenu.find(".bili-fav-fix-menu-item").text().includes(name) ) {
+                        const $menuItem = $(`<div class="bili-card-dropdown-popper__item bili-fav-fix-menu-item">${name}</div>`);
+                        $menuItem.on("click", handler);
+                        $dropdownMenu.append($menuItem);
+                    }
+                }, 500, event.data.handler);
+            });
+        } else {
+            if (successMsg)
+                handler2 = function() {
+                    handler(this);
                     alert(successMsg);
                 };
-            }
-        }
-        if (isNewUI) {
-            const $dropdownTrigger = $item.find(".bili-card-dropdown").first();
-            $dropdownTrigger.hover(
-                function() {
-                    setTimeout(function() {
-                        // 延时获取dropdownMenu元素，因为B站新UI动态生成该元素
-                        const $dropdownMenu = $(".bili-card-dropdown-popper.visible").first();
-                        if (! $dropdownMenu.find(".bili-fav-fix-menu-item").text().includes(name) ) {
-                            const $menuItem = $(`<div class="bili-card-dropdown-popper__item bili-fav-fix-menu-item">${name}</div>`);
-                            $menuItem.on("click", fun2);
-                            $dropdownMenu.append($menuItem);
-                        }
-                    }, 500);
-                }, function() {}
-            );
-        } else {
             const $dropdownMenu = $item.find(".be-dropdown-menu").first();
             if (! ($dropdownMenu.find(".bili-fav-fix-menu-item").text().includes(name)) ) {
                 const $lastChild = $dropdownMenu.children().last();
-                // 未添加过扩展
-                if (!$lastChild.hasClass('bili-fav-fix-menu-item'))
+                if (!$lastChild.hasClass('bili-fav-fix-menu-item'))  // 未添加过扩展
                     $lastChild.addClass("be-dropdown-item-delimiter");
-
                 const $menuItem = $(`<li class="be-dropdown-item bili-fav-fix-menu-item">${name}</li>`);
-                $menuItem.on("click", fun2);
+                $menuItem.on("click", handler2);
                 $dropdownMenu.append($menuItem);
             }
         }
@@ -1179,26 +1181,24 @@ ${tips}`;
             handleFavorites();
         }, delay * 1000);
     });
+
     // 初始化全局变量，及首次激活observer
     const intervalID = setInterval(function() {
         if ($("div.fav-list-main div.items").length > 0) {
             if (isDebug) console.log(`[bilibili-fav-fix] 检测到B站新UI加载完成`);
             isNewUI = true;
             $rootItem = $("div.fav-list-main div.items");
-            clearInterval(intervalID);
-            setTimeout(function() {
-                observer.observe($rootItem[0], observerOptions);
-                handleFavorites();
-            }, 3000);
         } else if ($("ul.fav-video-list.content").length > 0) {
             if (isDebug) console.log(`[bilibili-fav-fix] 检测到B站旧UI加载完成`);
             isNewUI = false;
             $rootItem = $("ul.fav-video-list.content");
-            clearInterval(intervalID);
-            setTimeout(function() {
-                observer.observe($rootItem[0], observerOptions);
-                handleFavorites();
-            }, 3000);
+        } else {
+            return;
         }
+        clearInterval(intervalID);
+        setTimeout(function() {
+            observer.observe($rootItem[0], observerOptions);
+            handleFavorites();
+        }, 4000);
     }, 1000);
 })();
