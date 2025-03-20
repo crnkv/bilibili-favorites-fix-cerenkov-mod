@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         哔哩哔哩(B站|Bilibili)收藏夹Fix (cerenkov修改版)
 // @namespace    http://tampermonkey.net/
-// @version      1.4.3
+// @version      1.4.4
 // @description  修复 哔哩哔哩(www.bilibili.com) 失效的视频收藏、和被up主隐藏的视频。（可查看av号、简介、标题、封面、数据等）
 // @note         1.4.* 版本主要更新：
 // @note         支持恢复被隐藏（up主设置为“仅自己可见”）的视频信息，让收藏夹不再“缺一角”
@@ -54,6 +54,8 @@
 
     // 全局变量，用于保存是否B站新网页界面，脚本自动检测
     let isNewUI;
+    // 全局变量，用于保存窗口宽度是否超过1760，脚本自动检测
+    let isWideScreen;
     // 全局变量，用于保存B新/旧界面各自的视频根节点，脚本自动检测
     let $rootItem;
     // 全局变量，用于保存由B站API端口查询得到的本应展示的视频总数（当中包含被隐藏的视频，即被up主设为“仅自己可见”的视频）
@@ -698,7 +700,15 @@
             fid = json.data.list[0].id;
         }
 
-        let url = getBilibiliApiUrl(fid, apiType, 1);
+        let pn;
+        if (isNewUI) {
+            pn = $("div.vui_pagenation--btns .vui_button.vui_button--active").text().trim();
+        } else {
+            pn = $("ul.be-pager li.be-pager-item.be-pager-item-active").text().trim();
+        }
+        if (!pn) pn = 1;
+
+        let url = getBilibiliApiUrl(fid, pn, apiType, 1);
 
         let origFid = fid;
         let mixedSearch = !url.includes("&keyword=&") && url.includes("&type=1&");  // 在全部收藏夹里搜索
@@ -710,7 +720,7 @@
             if (publicFavs.length == 0) return;  // TODO: (publicFavs.length == 0)时的下位替代
             fid = publicFavs[0].id;  // 随便取一个公开收藏夹的fid
             apiType = "public";
-            url = getBilibiliApiUrl(fid, apiType, 1);
+            url = getBilibiliApiUrl(fid, pn, apiType, 1);
         }
 
         let json = await fetchJSON(url);
@@ -722,7 +732,7 @@
                 mixedSearch = false;  // 退回
                 fid = origFid;
                 apiType = "private";
-                url = getBilibiliApiUrl(fid, apiType, 1);
+                url = getBilibiliApiUrl(fid, pn, apiType, 1);
                 json = await fetchJSON(url);
                 if (!json) return;
             }
@@ -735,15 +745,30 @@
             }
         }
 
-        // 旧的对公开收藏夹的访问API只接受最多数值20的ps参数，与B站新UI渲染时的一页40个视频不相符，需要分成两个part的网络请求来查询
+        // 旧的对公开收藏夹的非鉴权API只接受最多数值20的ps参数，与B站新UI渲染时的一页40个视频不相符，需要分成两个part的网络请求来查询
         if (isNewUI && apiType == "public") {
-            let json2 = await fetchJSON(getBilibiliApiUrl(fid, apiType, 2));
+            let json2 = await fetchJSON(getBilibiliApiUrl(fid, pn, apiType, 2));
             if (!json2) return;
             if (json2.data?.medias) {
                 // .medias可以undefined，但如果json2有，那么json也有
                 for (let i = 0; i < json2.data.medias.length; i++) {
                     json.data.medias[i+20] = json2.data.medias[i];
                 }
+                // 如果窗口宽度超过1760，B站新UI渲染还会变成6乘6，有时需要分成三个part的网络请求
+                // fetchPart=1,2 for pn%5=1,5; fetchPart=1,2,3 for pn%5=2,3,4
+                if (isWideScreen && (pn % 5 !== 0) && (pn % 5 !== 1)) {
+                    let json3 = await fetchJSON(getBilibiliApiUrl(fid, pn, apiType, 3));
+                    if (!json3) return;
+                    if (json3.data?.medias) {
+                        for (let i = 0; i < json3.data.medias.length; i++) {
+                            json.data.medias[i+40] = json3.data.medias[i];
+                        }
+                    }
+                }
+            }
+            if (isWideScreen) {
+                let start = (pn % 5) == 1 ? 0 : (5 - (pn - 1) % 5) * 4;
+                json.data.medias = json.data.medias.slice(start, start+36);
             }
         }
 
@@ -752,9 +777,9 @@
         if (mixedSearch) {
             if (isDebug) console.log(`[bilibili-fav-fix] also fetch private fav for complement`);
             // 使用privateAPI得到B站搜索原本展示的视频列表（包含私密收藏夹内容），以此为base，将publicAPI（不含私密收藏夹内容但包含up主隐藏视频）的丰富信息更新、替换上去
-            let json3 = await fetchJSON(getBilibiliApiUrl(fid, "private", 1));
-            if (!json3) return;
-            let baseMedias = json3.data.medias;
+            let json = await fetchJSON(getBilibiliApiUrl(fid, pn, "private", 1));
+            if (!json) return;
+            let baseMedias = json.data.medias;
             let i = -1;
             for (let media of medias) {
                 let match = baseMedias.map(m => m.id).indexOf(media.id);
@@ -793,7 +818,7 @@
                 media = media[0];
                 if (isDebug) console.log(media);
             } else {
-                console.error(`[bilibili-fav-fix] ${bvid} not found in Bilibili API JSON (wrong params?): ${getBilibiliApiUrl(fid, apiType, 1)}`);
+                console.error(`[bilibili-fav-fix] ${bvid} not found in Bilibili API JSON (wrong params?): ${getBilibiliApiUrl(fid, pn, apiType, 1)}`);
                 return;
             }
 
@@ -997,24 +1022,21 @@ ${tips}`;
     }
 
 
-    function getBilibiliApiUrl(fid, apiType, fetchPart) {
+    function getBilibiliApiUrl(fid, pn, apiType, fetchPart) {
         if (isDebug) console.log(
 `[bilibili-fav-fix] getBilibiliApiUrl
 [bilibili-fav-fix] fid: ${fid}
 [bilibili-fav-fix] apiType: ${apiType}
 [bilibili-fav-fix] fetchPart: ${fetchPart}`);
 
-        let pn, order, tid;
+        let order, tid;
         if (isNewUI) {
-            pn = $("div.vui_pagenation--btns .vui_button.vui_button--active").text().trim();
             order = $("div.fav-list-header-filter__left div.radio-filter__item--active").first().text().trim();
             tid = $("div.fav-list-header-collapse div.radio-filter__item--active").first().text().trim().replace(/\s+\d+/, "");
         } else {
-            pn = $("ul.be-pager li.be-pager-item.be-pager-item-active").text().trim();
             order = $("div.fav-filters > div.be-dropdown.filter-item > span").first().text().trim();
             tid = $("div.fav-filters > div:nth-child(2) > span").first().text().trim();  // 能够选择分区的旧UI似乎已经调不出来了，试过各种老UA都不行
         }
-        if (!pn) pn = 1;
         order = Object.fromEntries([["最近收藏", "mtime"], ["最多播放", "view"], ["最新投稿", "pubtime"], ["最近投稿", "pubtime"]])[order];
         if (order === undefined) order = "mtime";    // 执行收藏夹搜索时无从得知排序，只能手动指定成“最近收藏”，不保证结果正确
         tid = categoriesDictReversed[tid];
@@ -1044,14 +1066,24 @@ ${tips}`;
 `[bilibili-fav-fix] searchType: ${searchType}
 [bilibili-fav-fix] keyword: ${keyword}`);
 
+
+        let ps;
         if (apiType == "public") {
+            ps = 20;
             if (isNewUI) {
-                return `https://api.bilibili.com/medialist/gateway/base/spaceDetail?media_id=${fid}&pn=${pn*2-1+fetchPart-1}&ps=20&keyword=${keyword}&order=${order}&type=${searchType}&tid=${tid}&jsonp=jsonp`;
-            } else {
-                return `https://api.bilibili.com/medialist/gateway/base/spaceDetail?media_id=${fid}&pn=${pn}&ps=20&keyword=${keyword}&order=${order}&type=${searchType}&tid=${tid}&jsonp=jsonp`;
+                if (!isWideScreen) {
+                    pn = (pn-1)*2 + fetchPart;
+                } else {
+                    // 1-20, 21-40, 41-60, 61-80, 81-100, 101-120, 121-140, 141-160, 161-180
+                    // 1-36, 37-72, 73-108, 109-144, 145-180
+                    // fetchPart=1,2 for pn=1,5; fetchPart=1,2,3 for pn=2,3,4
+                    pn = Math.floor((pn-1)*9/5) + fetchPart;
+                }
             }
+            return `https://api.bilibili.com/medialist/gateway/base/spaceDetail?media_id=${fid}&pn=${pn}&ps=${ps}&keyword=${keyword}&order=${order}&type=${searchType}&tid=${tid}&jsonp=jsonp`;
         } else if (apiType == "private") {
-            return `https://api.bilibili.com/x/v3/fav/resource/list?media_id=${fid}&pn=${pn}&ps=${isNewUI ? 40 : 20}&keyword=${keyword}&order=${order}&type=${searchType}&tid=${tid}&platform=web`;
+            ps = isNewUI ? (isWideScreen ? 36 : 40) : 20;
+            return `https://api.bilibili.com/x/v3/fav/resource/list?media_id=${fid}&pn=${pn}&ps=${ps}&keyword=${keyword}&order=${order}&type=${searchType}&tid=${tid}&platform=web`;
         }
     }
 
@@ -1318,10 +1350,11 @@ ${tips}`;
         } else {
             return;
         }
+        isWideScreen = window.innerWidth > 1760;
         clearInterval(intervalID);
         setTimeout(function() {
             observer.observe($rootItem[0], observerOptions);
             handleFavorites();
-        }, 4000);
+        }, 3000);
     }, 1000);
 })();

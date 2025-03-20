@@ -48,12 +48,17 @@
 
 代码 fork 自 [Mr-Po/bilibili-favorites-fix](https://github.com/Mr-Po/bilibili-favorites-fix) ( Greasyfork 脚本[哔哩哔哩(B站|Bilibili)收藏夹Fix](https://greasyfork.org/zh-CN/scripts/383143) v1.2.1 )，因为该脚本在 2023 年 11 月或更早前就有小部分功能失效需要更新修复。[历史讨论](https://greasyfork.org/zh-CN/scripts/383143/discussions/214367)
 
-本脚本的核心功能依赖于第三方网站 biliplus.com 和 jijidown.com 的信息缓存，非常感谢 biliplus 和 jijidown 长久以来的付出。
+本脚本的核心功能依赖于第三方网站 biliplus.com jijidown.com xbeibeix.com 的信息缓存，非常感谢 biliplus jijidown xbeibeix 长久以来的付出。
+
+
+## 类似脚本
+
+友情链接(?)：[哔哩哔哩(B站|Bilibili)收藏夹Fix (备份视频信息)](https://greasyfork.org/zh-CN/scripts/521668-bilibili-favlist-backup)
 
 
 ## 画面展示
 
-<s>脚本更新至 v1.4.3 而展示截图暂未更新，望见谅</s>
+<s>脚本更新至 v1.4.4 而展示截图暂未更新，望见谅</s>
 
 - **例：成功修复标题、封面及简介信息**
 
@@ -93,6 +98,10 @@
 
 
 ## Changelog
+
+### v1.4.4 - 2025.03.20
+- 修复
+	- 适配B站新UI界面在宽屏（超过1760px）时的布局（6乘6）
 
 ### v1.4.3 - 2025.03.20
 - 新增
