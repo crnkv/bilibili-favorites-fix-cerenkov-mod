@@ -19,6 +19,7 @@
 // @connect      biliplus.com
 // @connect      jijidown.com
 // @connect      xbeibeix.com
+// @grant        unsafeWindow
 // @grant        GM.xmlHttpRequest
 // @grant        GM_notification
 // @grant        GM_setClipboard
