@@ -1,13 +1,10 @@
 // ==UserScript==
 // @name         哔哩哔哩(B站|Bilibili)收藏夹Fix (cerenkov修改版)
 // @namespace    http://tampermonkey.net/
-// @version      1.4.4
+// @version      1.4.5
 // @description  修复 哔哩哔哩(www.bilibili.com) 失效的视频收藏、和被up主隐藏的视频。（可查看av号、简介、标题、封面、数据等）
-// @note         1.4.* 版本主要更新：
-// @note         支持恢复被隐藏（up主设置为“仅自己可见”）的视频信息，让收藏夹不再“缺一角”
-// @note         多个数据来源： biliplus jijidown xbeibeix B站官方鉴权API、 B站官方非鉴权API，最大程度恢复信息
-// @note         建议将收藏夹设为公开，可以通过 B站官方非鉴权API 查询并恢复很多视频信息，脚本缓存后再改回私密
-// @note         查询结果缓存在篡改猴（Tampermonkey）的本地存储，免除对同一个失效视频的反复查询，刷新标签页、关闭浏览器也不再丢失数据
+// @note         1.4.5 版本更新：
+// @note         取消在 xbeibeix 搜索视频信息的步骤，仅保留对应函数
 // @author       cerenkov
 // @license      GPL-3.0
 // @match        *://space.bilibili.com/*/favlist*
@@ -32,6 +29,8 @@
 // @grant        GM_setValues
 // @grant        GM_getValues
 // @grant        GM_deleteValues
+// @downloadURL https://update.greasyfork.org/scripts/489224/%E5%93%94%E5%93%A9%E5%93%94%E5%93%A9%28B%E7%AB%99%7CBilibili%29%E6%94%B6%E8%97%8F%E5%A4%B9Fix%20%28cerenkov%E4%BF%AE%E6%94%B9%E7%89%88%29.user.js
+// @updateURL https://update.greasyfork.org/scripts/489224/%E5%93%94%E5%93%A9%E5%93%94%E5%93%A9%28B%E7%AB%99%7CBilibili%29%E6%94%B6%E8%97%8F%E5%A4%B9Fix%20%28cerenkov%E4%BF%AE%E6%94%B9%E7%89%88%29.meta.js
 // ==/UserScript==
 
 /*jshint esversion: 8 */
@@ -297,15 +296,15 @@
 
     // 脚本主入口
     // 函数调用逻辑：
-    // - handleFavorites 调用 startBilibiliApiQuery startBiliplusQuery 和 queryCached （如果命中缓存）
-    // - startBiliplusQuery 调用 queryHit （如果查询有结果）和 startJijidownQuery （如果查询无结果）
-    // - startJijidownQuery 调用 queryHit （如果查询有结果）和 startXbeibeixQuery （如果查询无结果）
-    // - startXbeibeixQuery 调用 queryHit （如果查询有结果）和 queryFailed（如果查询无结果）
-    // - queryHit 条件性调用 refineBiliplusQuery （如果有 refine 需求）
-    // - queryFailed 调用 queryCached
-    // - queryCached 条件性调用 refineBiliplusQuery （如果有 refine 需求）
-    // - startBilibiliApiQuery 设定是否需要 refine 的条件，且条件性调用 recoverHiddenItems
-    // - 最终负责执行的是 setTitleLink setTitleText setCoverPic setTooltip replaceTooltip replaceAuthorText 等等
+    // * handleFavorites 调用 startBilibiliApiQuery startBiliplusQuery 和 queryCached （如果命中缓存）
+    // * startBiliplusQuery 调用 queryHit （如果查询有结果）和 startJijidownQuery （如果查询无结果）
+    // * startJijidownQuery 调用 queryHit （如果查询有结果）和 queryFailed （如果查询无结果）
+    // * 已弃用：原 startXbeibeixQuery 调用 queryHit （如果查询有结果）和 queryFailed （如果查询无结果）
+    // * queryHit 条件性调用 refineBiliplusQuery （如果有 refine 需求）
+    // * queryFailed 调用 queryCached
+    // * queryCached 条件性调用 refineBiliplusQuery （如果有 refine 需求）
+    // * startBilibiliApiQuery 设定是否需要 refine 的条件，且条件性调用 recoverHiddenItems
+    // * 最终负责执行的是 setTitleLink setTitleText setCoverPic setTooltip replaceTooltip replaceAuthorText 等等
     function handleFavorites() {
         if (isDebug) console.log(`[bilibili-fav-fix] isNewUI: ${isNewUI}`);
 
@@ -427,7 +426,12 @@
             fetchJSON(`https://www.jijidown.com/api/v1/video/get_info?id=${avid}`)
                 .then(json => {
                     if (!json) {  // 由于网络请求遇到故障中断、网站暂时下线等，重试也无益
-                        startXbeibeixQuery($item, avid, false, isForPic, silent);
+                        // startXbeibeixQuery($item, avid, false, isForPic, silent);
+                        if (!isForPic) {
+                            queryFailed($item, avid);
+                        } else {
+                            if (!silent) setTitleText($item, cache.get(avid, "title"), true);
+                        }
                     } else if (json.code == 0 || json.upid == undefined) {  // 大概率是请求过快
                         if (isDebug) console.log(`[bilibili-fav-fix] jijidown 请求过快 ${avid}`);
                         setTitleRetry($item, {item: $item}, function(event) {
@@ -438,7 +442,13 @@
                         });
                     } else if (json.upid == -1 || json.upid == 0 || json.title == "视频去哪了呢？" || json.title == "该视频或许已经被删除了" || (json.title == avid && json.img == "")) {
                         if (isDebug) console.log(`[bilibili-fav-fix] jijidown failed for ${avid}`);
-                        startXbeibeixQuery($item, avid, isDecisive, isForPic, silent);
+                        // startXbeibeixQuery($item, avid, isDecisive, isForPic, silent);
+                        if (isDecisive) cache.update(avid, "archive", "nohit");
+                        if (!isForPic) {
+                            queryFailed($item, avid);
+                        } else {
+                            if (!silent) setTitleText($item, cache.get(avid, "title"), true);
+                        }
                     } else {
                         if (isDebug) console.log(`[bilibili-fav-fix] jijidown retrieved info for ${avid}`);
                         let pic = cache.update(avid, "pic", json.img);
@@ -451,8 +461,10 @@
                                 if (isDebug) console.log(`[bilibili-fav-fix] jijidown got better pic for ${avid}`);
                         }
                         if (!/bfs\/archive/i.test(pic)) {  // 极大概率是失效的旧图片链接
-                            if (isDebug) console.log(`[bilibili-fav-fix] query for better pic for ${avid}`);
-                            startXbeibeixQuery($item, avid, false, true);
+                            // if (isDebug) console.log(`[bilibili-fav-fix] query for better pic for ${avid}`);
+                            // startXbeibeixQuery($item, avid, false, true);
+                            if (isDebug) console.log(`[bilibili-fav-fix] jijidown failed for valid pic for ${avid}`);
+                            // 终止封面图查询
                         }
                     }
                 });
@@ -993,7 +1005,7 @@
             reason = "未知";
         }
 
-        let tooltip = 
+        let tooltip =
 `【点击封面复制】【点击标题跳转】
 AV号：${media.id}
 BV号：${media.bvid}
